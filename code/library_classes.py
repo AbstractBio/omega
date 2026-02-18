@@ -352,7 +352,13 @@ class Pool:
         for _ in tqdm(range(nopt_steps), ncols=100, total=nopt_steps, disable=disable_progress, leave=True):
 
             change_idx: int = random.choice(range(len(self.genes)))
-            unchanged_pool_sites: np.ndarray[str] = np.hstack([g.assigned_sites.ggsite.to_numpy() for i, g in enumerate(self.genes) if i != change_idx])
+            #altered by us at abstract!
+            other_sites = [g.assigned_sites.ggsite.to_numpy() for i, g in enumerate(self.genes) if i != change_idx]
+            if other_sites:
+                unchanged_pool_sites = np.hstack(other_sites)
+            else:
+                unchanged_pool_sites = np.array([], dtype=str)
+            #unchanged_pool_sites: np.ndarray[str] = np.hstack([g.assigned_sites.ggsite.to_numpy() for i, g in enumerate(self.genes) if i != change_idx])
             candidates: pd.DataFrame = self.genes[change_idx].shuffle_site(pool_ggsites=unchanged_pool_sites, min_dist=40)
             
             used_sites = np.hstack([
@@ -554,7 +560,13 @@ class SAPool:
             while True:
                 change_idx: int = random.choice(range(len(self.genes)))
                 # pool sites from the genes
-                unchanged_pool_sites: np.ndarray[str] = np.hstack([g.assigned_sites.ggsite.to_numpy() for i, g in enumerate(self.genes) if i != change_idx])
+                other_sites = [g.assigned_sites.ggsite.to_numpy() for i, g in enumerate(self.genes) if i != change_idx]
+                #changed by us at abstract
+                if other_sites:
+                    unchanged_pool_sites = np.hstack(other_sites)
+                else:
+                    unchanged_pool_sites = np.array([], dtype=str)
+                #unchanged_pool_sites: np.ndarray[str] = np.hstack([g.assigned_sites.ggsite.to_numpy() for i, g in enumerate(self.genes) if i != change_idx])
                 # these are a new set of GG sites from change_idx gene - they have to actually be assigned to the gene
                 candidates: pd.DataFrame = self.genes[change_idx].shuffle_site(pool_ggsites=unchanged_pool_sites, min_dist=40)
 
