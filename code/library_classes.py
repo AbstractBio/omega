@@ -129,7 +129,10 @@ class Library:
                 and Columns should be str formatted GG sites.
         """
         #pylint:disable=line-too-long
-
+        print(len([self.upstream_bbsite, self.downstream_bbsite]))
+        print(len(self.other_used_sites))
+        print(self.estimate_nfrags())
+        
         ngenes_per_pool = (njunctions - len([self.upstream_bbsite, self.downstream_bbsite]) - len(self.other_used_sites)) // (self.estimate_nfrags() - 1)
         npools = ceil(len(self.genes) / ngenes_per_pool)
 
