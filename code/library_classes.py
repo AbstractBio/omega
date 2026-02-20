@@ -129,11 +129,8 @@ class Library:
                 and Columns should be str formatted GG sites.
         """
         #pylint:disable=line-too-long
-        print(len([self.upstream_bbsite, self.downstream_bbsite]))
-        print(len(self.other_used_sites))
-        print(self.estimate_nfrags())
         
-        ngenes_per_pool = (njunctions - len([self.upstream_bbsite, self.downstream_bbsite]) - len(self.other_used_sites)) // (self.estimate_nfrags() - 1)
+        ngenes_per_pool = (njunctions - len([s for s in [self.upstream_bbsite, self.downstream_bbsite] if s]) - len(self.other_used_sites)) // (self.estimate_nfrags() - 1)
         npools = ceil(len(self.genes) / ngenes_per_pool)
 
         print(f"Target number of genes per pool: {ngenes_per_pool} genes assembled in {npools} pools.")
@@ -266,9 +263,10 @@ class Pool:
     ):
         self.name = name
         self.enzyme = enzyme
-        self.upstream_bbsite = upstream_bbsite
-        self.downstream_bbsite = downstream_bbsite
-        self.other_used_sites = other_used_sites or []  # TODO: may need to change this to np.array([])
+        self.upstream_bbsite = upstream_bbsite if upstream_bbsite else ""
+        self.downstream_bbsite = downstream_bbsite if downstream_bbsite else ""
+        # Filter out empty strings from other_used_sites
+        self.other_used_sites = [s for s in (other_used_sites or []) if s]
         self.fprimer = forward_primer
         self.rprimer = reverse_primer
         self.oligo_len = oligo_len
@@ -346,7 +344,7 @@ class Pool:
             predict_fidelity(
                 np.hstack([
                     np.hstack([df.ggsite.to_numpy() for df in current_state]),
-                    np.array([self.upstream_bbsite, self.downstream_bbsite])
+                    np.array([s for s in [self.upstream_bbsite, self.downstream_bbsite] if s])
                 ]),
                 self.ligation_data
             )
@@ -367,8 +365,8 @@ class Pool:
             used_sites = np.hstack([
                 unchanged_pool_sites,
                 candidates.ggsite.to_numpy(),
-                np.array([self.upstream_bbsite, self.downstream_bbsite]),
-                np.array(self.other_used_sites)
+                np.array([s for s in [self.upstream_bbsite, self.downstream_bbsite] if s]),
+                np.array([s for s in self.other_used_sites if s])
             ])
 
             candidate_fidelity = predict_fidelity(used_sites, self.ligation_data)
@@ -386,16 +384,16 @@ class Pool:
         self.optimized_fidelity = predict_fidelity(
             np.hstack([
                 np.hstack([df.ggsite.to_numpy() for df in current_state]),
-                np.array([self.upstream_bbsite, self.downstream_bbsite] + self.other_used_sites)
+                np.array([s for s in [self.upstream_bbsite, self.downstream_bbsite] if s] + [s for s in self.other_used_sites if s])
             ]),
             self.ligation_data
         )
         self.min_gene_fidelity = predict_minimum(
-            [df.ggsite.to_numpy() for df in self.optimized_sites] + [self.upstream_bbsite, self.downstream_bbsite],
+            [df.ggsite.to_numpy() for df in self.optimized_sites] + [s for s in [self.upstream_bbsite, self.downstream_bbsite] if s],
             self.ligation_data
         )
         self.min_site_fidelity = predict_minimum_site(
-            [np.array([df.ggsite.to_numpy() for df in self.optimized_sites]).flatten()] + [self.upstream_bbsite, self.downstream_bbsite],
+            [np.array([df.ggsite.to_numpy() for df in self.optimized_sites]).flatten()] + [s for s in [self.upstream_bbsite, self.downstream_bbsite] if s],
             self.ligation_data
         )
 
@@ -430,11 +428,11 @@ class Pool:
         """Return optimization output for pool."""
 
         min_gene_fidelity = predict_minimum(
-            [df.ggsite.to_numpy() for df in self.optimized_sites] + [self.upstream_bbsite, self.downstream_bbsite],
+            [df.ggsite.to_numpy() for df in self.optimized_sites] + [s for s in [self.upstream_bbsite, self.downstream_bbsite] if s],
             self.ligation_data
         )
         min_site_fidelity = predict_minimum_site(
-            [np.array([df.ggsite.to_numpy() for df in self.optimized_sites]).flatten()] + [self.upstream_bbsite, self.downstream_bbsite],
+            [np.array([df.ggsite.to_numpy() for df in self.optimized_sites]).flatten()] + [s for s in [self.upstream_bbsite, self.downstream_bbsite] if s],
             self.ligation_data
         )
 
@@ -467,9 +465,9 @@ class SAPool:
     ):
         self.name = name
         self.enzyme = enzyme
-        self.upstream_bbsite = upstream_bbsite
-        self.downstream_bbsite = downstream_bbsite
-        self.other_used_sites = other_used_sites or []  # TODO: may need to change this to np.array([])
+        self.upstream_bbsite = upstream_bbsite if upstream_bbsite else ""
+        self.downstream_bbsite = downstream_bbsite if downstream_bbsite else ""
+        self.other_used_sites = [s for s in (other_used_sites or []) if s]
         self.fprimer = forward_primer
         self.rprimer = reverse_primer
         self.oligo_len = oligo_len
@@ -551,7 +549,7 @@ class SAPool:
         start_fidelity = predict_fidelity(
                 np.hstack([
                     np.hstack([df.ggsite.to_numpy() for df in list(current_state.values())]),
-                    np.array([self.upstream_bbsite, self.downstream_bbsite])
+                    np.array([s for s in [self.upstream_bbsite, self.downstream_bbsite] if s])
                 ]),
                 self.ligation_data
             )
@@ -581,8 +579,8 @@ class SAPool:
             used_sites = np.hstack([
                 unchanged_pool_sites,
                 candidates.ggsite.to_numpy(),
-                np.array([self.upstream_bbsite, self.downstream_bbsite]),
-                np.array(self.other_used_sites)
+                np.array([s for s in [self.upstream_bbsite, self.downstream_bbsite] if s]),
+                np.array([s for s in self.other_used_sites if s])
             ])
 
             candidate_fidelity = predict_fidelity(used_sites.tolist(), self.ligation_data)
@@ -624,17 +622,17 @@ class SAPool:
         self.optimized_fidelity = predict_fidelity(
             np.hstack([
                 np.hstack([df.ggsite.to_numpy() for df in list(best_state.values())]),
-                np.array([self.upstream_bbsite, self.downstream_bbsite] + self.other_used_sites)
+                np.array([s for s in [self.upstream_bbsite, self.downstream_bbsite] if s] + [s for s in self.other_used_sites if s])
             ]),
             self.ligation_data
         )
 
         self.min_gene_fidelity = predict_minimum(
-            [df.ggsite.tolist() for df in list(self.optimized_sites.values())] + [[self.upstream_bbsite], [self.downstream_bbsite]],
+            [df.ggsite.tolist() for df in list(self.optimized_sites.values())] + [[s] for s in [self.upstream_bbsite, self.downstream_bbsite] if s],
             self.ligation_data
         )
         self.min_site_fidelity = predict_minimum_site(
-            list(chain(*[df.ggsite.tolist() for df in list(self.optimized_sites.values())])) + [self.upstream_bbsite, self.downstream_bbsite],
+            list(chain(*[df.ggsite.tolist() for df in list(self.optimized_sites.values())])) + [s for s in [self.upstream_bbsite, self.downstream_bbsite] if s],
             self.ligation_data
         )
 
@@ -678,7 +676,7 @@ class SAPool:
         # add support for getting individual gene fidelities
         outputs = pd.DataFrame.from_dict(outputs)
         gg_cols = outputs.columns[outputs.columns.str.startswith('ggsite_')]
-        gene_ggsites = [row.loc[gg_cols].tolist() for _, row in outputs.iterrows()] + [[self.upstream_bbsite, self.downstream_bbsite] + self.other_used_sites]
+        gene_ggsites = [row.loc[gg_cols].tolist() for _, row in outputs.iterrows()] + [[s for s in [self.upstream_bbsite, self.downstream_bbsite] if s] + [s for s in self.other_used_sites if s]]
 
         gene_fidelities = geneset_fidelity(gene_ggsites, self.ligation_data)
         outputs['gene_fidelity'] = gene_fidelities[:-1]
@@ -706,9 +704,9 @@ class Gene:
         self.name = name
         self.seq = sequence.upper()
         self.enzyme = enzyme
-        self.upstream_bbsite = upstream_bbsite
-        self.downstream_bbsite = downstream_bbsite
-        self.other_used_sites = other_used_sites or []
+        self.upstream_bbsite = upstream_bbsite if upstream_bbsite else ""
+        self.downstream_bbsite = downstream_bbsite if downstream_bbsite else ""
+        self.other_used_sites = [s for s in (other_used_sites or []) if s]
         self.oligo_len = oligo_len
         self.illegal_dna_sequences = illegal_dna_sequences
 
@@ -730,10 +728,10 @@ class Gene:
             {'ggsite':"".join(ggsite),'pos':i} for i, ggsite in enumerate(sliding_window(self.seq, self.enzyme.site_size))
         ])
         disallowed_sites = np.hstack([
-            np.array([self.upstream_bbsite, self.downstream_bbsite]),
-            np.array(self.other_used_sites),
+            np.array([s for s in [self.upstream_bbsite, self.downstream_bbsite] if s]),
+            np.array([s for s in self.other_used_sites if s]),
             np.array([str(Seq(self.upstream_bbsite).reverse_complement()), str(Seq(self.downstream_bbsite).reverse_complement())]),
-            np.array([str(Seq(s).reverse_complement()) for s in self.other_used_sites]),
+            np.array([str(Seq(s).reverse_complement()) for s in self.other_used_sites if s]),
             np.array(['GCGC', 'CGCG', 'ATAT', 'TATA', 'GGCC', 'GGCC', 'AATT', 'TTAA', 'TGCA', 'AGCT','TCGA', 'ACGT', 'GATC', 'GTAC', 'CATG', 'CTAG'])
         ])
         # print(disallowed_sites)
@@ -795,8 +793,8 @@ class Gene:
                 
                 # remove any used sites - make sure to remove the WC pair, too - makes selection more efficient
                 used_sites = np.hstack([
-                    np.array([self.upstream_bbsite, self.downstream_bbsite]),
-                    np.array([str(Seq(self.upstream_bbsite).reverse_complement()), str(Seq(self.downstream_bbsite).reverse_complement())]),
+                    np.array([s for s in [self.upstream_bbsite, self.downstream_bbsite] if s] + [s for s in self.other_used_sites if s]),
+                    np.array([str(Seq(s).reverse_complement()) for s in [self.upstream_bbsite, self.downstream_bbsite] if s] + [str(Seq(s).reverse_complement()) for s in self.other_used_sites if s]),
                     keep_sites.ggsite.to_numpy(),
                     np.array([str(Seq(s).reverse_complement()) for s in keep_sites.ggsite]),
                     pool_ggsites,
@@ -827,7 +825,12 @@ class Gene:
         """
         if self.gene_assembles():
             frag_gene = self.__fragment_gene()
-            frag_gene = [self.__add_restriction_sites(f) for f in frag_gene]
+            if self.upstream_bbsite and self.downstream_bbsite:
+                frag_gene = [self.__add_restriction_sites(f) for f in frag_gene]
+            else:
+                frag_gene[0] = self.__add_restriction_sites(frag_gene[0], type="fiveP")
+                frag_gene[-1] = self.__add_restriction_sites(frag_gene[-1], type="threeP")
+                frag_gene[1:-1] = [self.__add_restriction_sites(f, type="normal") for f in frag_gene[1:-1]]
 
         if pad_oligo:
             frag_gene = [self.__add_padding(f) for f in frag_gene]
@@ -842,7 +845,16 @@ class Gene:
 
         output = {'gene_id':self.name, 'sequence':self.seq}
         oligos = {f'oligo_{i}':oligo for i, oligo in enumerate(self.get_oligos(add_primers, pad_oligo))}
-        bbsites = {'upstream_bbsite':self.upstream_bbsite, 'downstream_bbsite':self.downstream_bbsite}
+        bbsites = {}
+        if self.upstream_bbsite:
+            bbsites['upstream_bbsite'] = self.upstream_bbsite
+        else:
+            bbsites['upstream_bbsite'] = ""
+        if self.downstream_bbsite:
+            bbsites['downstream_bbsite'] = self.downstream_bbsite
+        else:
+            bbsites['downstream_bbsite'] = ""
+            
         extra_sites = {f'extra_ggsite_{i}':s for i, s in enumerate(self.other_used_sites)}
         ggsites = ggsites = {f'ggsite_{i}':site for i, site in enumerate(self.assigned_sites.sort_values('pos', ascending=True).ggsite)}
         primers = {'fwd_primer':self.fprimer.sequence, 'rev_primer':self.rprimer.sequence}
@@ -872,15 +884,23 @@ class Gene:
 
         return fragments
 
-    def __add_restriction_sites(self, oligo: str, pad_bp: str = 'A') -> str:
+    def __add_restriction_sites(self, oligo: str, pad_bp: str = 'A', type = "normal") -> str:
         """Regurn oligo with restriction sites placed on either side.
         
         FIXME: right now this needs to be called after you add in all GG sites.
         """
-        forward_site = self.enzyme.seq + pad_bp*self.enzyme.padding
-        reverse_site = pad_bp*self.enzyme.padding + self.enzyme.revc_seq
+        if type == "normal":
+            forward_site = self.enzyme.seq + pad_bp*self.enzyme.padding
+            reverse_site = pad_bp*self.enzyme.padding + self.enzyme.revc_seq
+            return forward_site + oligo + reverse_site
+        elif type == "fiveP":
+            reverse_site = pad_bp*self.enzyme.padding + self.enzyme.revc_seq
+            return oligo + reverse_site
+        elif type == "threeP":
+            forward_site = self.enzyme.seq + pad_bp*self.enzyme.padding
+            return forward_site + oligo
 
-        return forward_site + oligo + reverse_site
+        return 1
     
     def __add_padding(self, oligo: str) -> str:
         """Add random DNA padding to oligo."""
@@ -960,9 +980,14 @@ class Gene:
                 raise ValueError('Golden Gate sites do not match between fragments.')
 
         # check that the AA sequence for assembled DNA is the same as the original AA sequence
-        assembled_aas = str(Seq(assembled[self.enzyme.site_size:-self.enzyme.site_size]).translate())
-        if assembled_aas == str(Seq(self.seq).translate()):
+        # This was changed by us at abstract - we were checking AA but we are only doing DNA!
+        if self.upstream_bbsite and self.downstream_bbsite:
+            assembled_aas = str(Seq(assembled[self.enzyme.site_size:-self.enzyme.site_size]))
+        else:
+            assembled_aas = str(Seq(assembled))
+
+        if assembled_aas == str(Seq(self.seq)):
             return True
         else:
-            raise ValueError('Amino acid sequence from assembled gene does not match \
-                              the original AA sequence.')
+            raise ValueError('DNA sequence from assembled gene does not match \
+                              the original DNA sequence.')
