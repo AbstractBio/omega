@@ -964,7 +964,7 @@ class Gene:
         return "".join([
             self.fprimer.sequence,
             oligo,
-            str(Seq(self.rprimer.sequence).reverse_complement())
+            self.rprimer.sequence
         ])
 
 
