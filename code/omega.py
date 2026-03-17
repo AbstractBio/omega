@@ -45,6 +45,8 @@ def genes(
         oligo_len: int = 300,
         min_size: int = 40,
         optimization: str = 'simulated_annealing',
+        gc_weight: float = 0.0,
+        nfrags_override: Optional[int] = None,
         dev: bool = False
 ) -> None:
     """
@@ -71,6 +73,9 @@ def genes(
             uses a different random seed.
         njobs: Number of CPUs to use for simultaneous optimization runs. Each CPU executes
             one run.
+        gc_weight: Weight applied to the GC-balance score during optimization. 0.0 disables
+            the GC term (pure fidelity). Values around 0.05-0.1 are a reasonable starting
+            point when GC balance is a concern.
 
     """
     #pylint: disable=too-many-arguments, too-many-locals
@@ -106,7 +111,8 @@ def genes(
         downstream_bbsite=downstream_bbsite,
         other_used_sites=other_used_sites,
         illegal_dna_sequences=illegal_dna_sequences,
-        min_size=min_size
+        min_size=min_size,
+        nfrags_override=nfrags_override
     )
     
     # assign optimization seeds - use nopt_runs to get random_opt seeds
@@ -126,7 +132,8 @@ def genes(
         opt_seeds=random_seeds,
         njobs=njobs,
         ligation_data=ligation_data.data,
-        optimization=optimization
+        optimization=optimization,
+        gc_weight=gc_weight
     )
 
     optimized_library = library.package_library(add_primers=add_primers, pad_oligo=pad_oligos)

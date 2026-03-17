@@ -14,7 +14,7 @@ from tqdm import tqdm
 
 from data_classes import Enzyme, PrimerIterator
 from helpers import unique_orthogonal, random_dna, dna_contains_seq
-from predict_fidelity import predict_fidelity, predict_minimum, predict_minimum_site, geneset_fidelity
+from predict_fidelity import predict_fidelity, predict_minimum, predict_minimum_site, geneset_fidelity, overhang_gc_score
 
 from joblib import Parallel, delayed
 
@@ -28,11 +28,32 @@ def get_coding_space(oligo_len: int, fprimer: str, rprimer: str, enzyme: Enzyme)
 
     return oligo_len - len(fprimer) - len(rprimer) - (enzyme.padding+len(enzyme.seq))*2 - enzyme.site_size
 
+
+def composite_score(sites, ligation_data: np.ndarray, gc_weight: float) -> float:
+    """Weighted combination of ligation fidelity and GC-balance score.
+
+    Args:
+        sites: Iterable of GG overhang sequences passed to predict_fidelity.
+        ligation_data: Ligation frequency matrix.
+        gc_weight: Weight applied to the GC-balance term.  A value of 0.0
+            reduces this to a plain predict_fidelity call.
+
+    Returns:
+        fidelity + gc_weight * gc_balance_score
+    """
+    fidelity = predict_fidelity(sites, ligation_data)
+    if gc_weight == 0.0:
+        return fidelity
+    gc = overhang_gc_score(sites)
+    return fidelity + gc_weight * gc
+
+
 def optimize_pools(
     name: Any, genes: list[tuple[Any, str]], enzyme: Enzyme, upstream_bbsite: str,
     downstream_bbsite: str, other_used_sites: Union[list[str], None],
     forward_primer: Union[str, None], reverse_primer: Union[str, None], illegal_dna_sequences: tuple[str], oligo_len: int,
-    nfrags: int, ligation_data: np.ndarray, nopt_steps: int, random_seed: int, optimization: str
+    nfrags: int, ligation_data: np.ndarray, nopt_steps: int, random_seed: int, optimization: str,
+    gc_weight: float = 0.0
 ) -> tuple["Pool", float, int]:
     """Optimize a single subassembly pool. Called by Library."""
 
@@ -71,7 +92,7 @@ def optimize_pools(
     else:
         raise ValueError('`optimization` must be `simulated_annealing` or `greedy`.')
 
-    fidelity = pool.optimize(nopt_steps=nopt_steps, random_seed=int(random_seed), disable_progress=True)
+    fidelity = pool.optimize(nopt_steps=nopt_steps, random_seed=int(random_seed), disable_progress=True, gc_weight=gc_weight)
 
     return pool, fidelity, random_seed
 
@@ -89,7 +110,8 @@ class Library:
         downstream_bbsite: str,
         other_used_sites: Union[np.ndarray, None],
         illegal_dna_sequences: tuple[str],
-        min_size: int = 40
+        min_size: int = 40,
+        nfrags_override: Optional[int] = None
     ):
 
         self.genes = genes
@@ -101,7 +123,7 @@ class Library:
         self.other_used_sites = other_used_sites or np.array([])
         self.illegal_dna_sequences = illegal_dna_sequences
         self.min_size = min_size
-        self.nfrags = self.estimate_nfrags()
+        self.nfrags = nfrags_override if nfrags_override is not None else self.estimate_nfrags()
 
 
         self._max_primer_space = self.__get_max_primer_space()
@@ -114,7 +136,8 @@ class Library:
     #? TODO: Be careful - you have two things labelled 'optimize_pools' - you need to change that.
     def optimize_pools(
             self, nopt_steps: int, njobs: int, njunctions: int, ligation_data: pd.DataFrame,
-            optimization: str, nopt_runs: Optional[int] = None, opt_seeds: Optional[list[int]] = None
+            optimization: str, nopt_runs: Optional[int] = None, opt_seeds: Optional[list[int]] = None,
+            gc_weight: float = 0.0
     ) -> list["Pool"]:
         """Optimize each pool in the library. Each pool is run for the number of nopt_runs
         with each run using a different random seed.
@@ -166,7 +189,8 @@ class Library:
                 ligation_data=ligation_data,
                 nopt_steps=nopt_steps,
                 random_seed=rand_seed,
-                optimization=optimization
+                optimization=optimization,
+                gc_weight=gc_weight
             ) for rand_seed in opt_seeds)
 
             opt_results.sort(key=lambda x: x[1])
@@ -331,7 +355,7 @@ class Pool:
 
 
 
-    def optimize(self, nopt_steps: int, random_seed: int, disable_progress: bool = False) -> float:
+    def optimize(self, nopt_steps: int, random_seed: int, disable_progress: bool = False, gc_weight: float = 0.0) -> float:
         """Optimize GG site usage to find orthogonal site options."""
 
         random.seed(int(random_seed))
@@ -341,12 +365,13 @@ class Pool:
 
         # start optimization trajectory with starting state of subassembly pool
         opt_trajectory = [
-            predict_fidelity(
+            composite_score(
                 np.hstack([
                     np.hstack([df.ggsite.to_numpy() for df in current_state]),
                     np.array([s for s in [self.upstream_bbsite, self.downstream_bbsite] if s])
                 ]),
-                self.ligation_data
+                self.ligation_data,
+                gc_weight
             )
         ]
 
@@ -369,7 +394,7 @@ class Pool:
                 np.array([s for s in self.other_used_sites if s])
             ])
 
-            candidate_fidelity = predict_fidelity(used_sites, self.ligation_data)
+            candidate_fidelity = composite_score(used_sites, self.ligation_data, gc_weight)
 
             # we are doing a greedy optimization - if better, accept
             if candidate_fidelity >= opt_trajectory[-1]:
@@ -534,7 +559,7 @@ class SAPool:
                 break
 
 
-    def optimize(self, nopt_steps: int, random_seed: int, disable_progress: bool = False) -> float:
+    def optimize(self, nopt_steps: int, random_seed: int, disable_progress: bool = False, gc_weight: float = 0.0) -> float:
         """Optimize GG site usage to find orthogonal site options."""
 
         random.seed(random_seed)
@@ -546,12 +571,13 @@ class SAPool:
         best_state: list[pd.DataFrame] = {i:g.assigned_sites for i,g in enumerate(self.genes)}
 
         # start optimization trajectory with starting state of subassembly pool
-        start_fidelity = predict_fidelity(
+        start_fidelity = composite_score(
                 np.hstack([
                     np.hstack([df.ggsite.to_numpy() for df in list(current_state.values())]),
                     np.array([s for s in [self.upstream_bbsite, self.downstream_bbsite] if s])
                 ]),
-                self.ligation_data
+                self.ligation_data,
+                gc_weight
             )
         opt_trajectory = [(start_fidelity, start_fidelity, 0, 0, 0, 0, start_temp)]  # (best, current, candidate fidelity, energy_diff, contender, thing to beat, temp)
 
@@ -583,7 +609,7 @@ class SAPool:
                 np.array([s for s in self.other_used_sites if s])
             ])
 
-            candidate_fidelity = predict_fidelity(used_sites.tolist(), self.ligation_data)
+            candidate_fidelity = composite_score(used_sites.tolist(), self.ligation_data, gc_weight)
             energy_diff = candidate_fidelity - opt_trajectory[-1][1]
             thing_to_beat = random.random()
             contender = np.exp(min([0, energy_diff / temp]))
@@ -737,7 +763,13 @@ class Gene:
         # print(disallowed_sites)
         # retain sites that are no backbone or disallowed sites
         ggsites = ggsites.loc[~ggsites.ggsite.isin(disallowed_sites)]
-        # print(ggsites)
+
+        # remove sites with GC content below 25% (all-AT overhangs are poor ligation substrates)
+        gc_content = ggsites.ggsite.apply(
+            lambda s: (s.count('G') + s.count('C')) / len(s)
+        )
+        ggsites = ggsites.loc[gc_content >= 0.25]
+
         return ggsites
 
     def get_start_sites_range(self, nfrags: int) -> list[tuple]:

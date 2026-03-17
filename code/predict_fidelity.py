@@ -93,3 +93,22 @@ def predict_average(gene_sites: Iterable[np.ndarray], data: pd.DataFrame) -> flo
     """
 
     return sum(geneset_fidelity(gene_sites, data)) / len(gene_sites)
+
+
+def overhang_gc_score(sites: Iterable[str]) -> float:
+    """Score a set of GG overhangs on GC balance.
+
+    Each site is scored as 1.0 when GC content is exactly 50% and 0.0 when
+    it is 0% or 100% GC.  The returned value is the mean across all sites.
+
+    Args:
+        sites: Iterable of GG overhang sequences (equal-length strings).
+
+    Returns:
+        Mean GC-balance score in [0, 1].
+    """
+    scores = [
+        1.0 - abs((s.count('G') + s.count('C')) / len(s) - 0.5) * 2
+        for s in sites
+    ]
+    return float(np.mean(scores)) if scores else 0.0
