@@ -7,6 +7,31 @@ import numpy as np
 import pandas as pd
 
 
+# ---------------------------------------------------------------------------
+# SantaLucia 1998 unified nearest-neighbor parameters for DNA/DNA duplexes
+# (1 M NaCl).  Keys are 5'->3' sense-strand dinucleotides.
+# Values: (delta_H kcal/mol, delta_S cal/mol/K)
+# ---------------------------------------------------------------------------
+_NN_H_S: dict[str, tuple[float, float]] = {
+    'AA': (-7.9, -22.2), 'TT': (-7.9, -22.2),
+    'AT': (-7.2, -20.4),
+    'TA': (-7.2, -21.3),
+    'CA': (-8.5, -22.7), 'TG': (-8.5, -22.7),
+    'GT': (-8.4, -22.4), 'AC': (-8.4, -22.4),
+    'CT': (-7.8, -21.0), 'AG': (-7.8, -21.0),
+    'GA': (-8.2, -22.2), 'TC': (-8.2, -22.2),
+    'CG': (-10.6, -27.2),
+    'GC': (-9.8,  -24.4),
+    'GG': (-8.0, -19.9), 'CC': (-8.0, -19.9),
+}
+
+# Initiation penalties for the terminal base pairs.
+_INIT_H_S: dict[str, tuple[float, float]] = {
+    'A': (2.3,  4.1), 'T': (2.3,  4.1),
+    'G': (0.1, -2.8), 'C': (0.1, -2.8),
+}
+
+
 def correct_ligations(site: str, wc_site: str, data_matrix: pd.DataFrame) -> int:
     """Retrieves number of correct ligations observed for a GG site."""
 
@@ -112,3 +137,93 @@ def overhang_gc_score(sites: Iterable[str]) -> float:
         for s in sites
     ]
     return float(np.mean(scores)) if scores else 0.0
+
+
+def overhang_dG(site: str, temp_C: float = 37.0) -> float:
+    """Estimate ΔG (kcal/mol) for a short DNA overhang duplex.
+
+    Uses SantaLucia 1998 unified nearest-neighbor parameters with terminal
+    initiation corrections.  Suitable for 4-mer Golden Gate overhangs.
+
+    Args:
+        site: Overhang sequence (e.g. 'ACGT').  Case-insensitive.
+        temp_C: Temperature in °C.  Defaults to 37 °C.
+
+    Returns:
+        ΔG in kcal/mol (more negative = more stable / stronger binding).
+    """
+    site = site.upper()
+    temp_K = temp_C + 273.15
+
+    dH = sum(_NN_H_S[site[i:i+2]][0] for i in range(len(site) - 1))
+    dS = sum(_NN_H_S[site[i:i+2]][1] for i in range(len(site) - 1))
+
+    ih_5, is_5 = _INIT_H_S[site[0]]
+    ih_3, is_3 = _INIT_H_S[site[-1]]
+    dH += ih_5 + ih_3
+    dS += is_5 + is_3
+
+    return dH - temp_K * (dS / 1000.0)
+
+
+def overhang_uniformity_score(sites: Iterable[str], temp_C: float = 37.0) -> float:
+    """Score a set of GG overhangs on thermodynamic uniformity.
+
+    A perfectly uniform set (all overhangs identical ΔG) scores 1.0.
+    The score decreases as the standard deviation of ΔG values across sites
+    grows, following 1 / (1 + σ).  This penalises overhang sets where some
+    sites bind much more strongly than others, which correlates with biased
+    final product formation in pooled GG assembly.
+
+    Args:
+        sites: Iterable of GG overhang sequences.
+        temp_C: Temperature for ΔG calculation (default 37 °C).
+
+    Returns:
+        Uniformity score in (0, 1].
+    """
+    site_list = list(sites)
+    if len(site_list) <= 1:
+        return 1.0
+    dg_values = np.array([overhang_dG(s, temp_C) for s in site_list])
+    return 1.0 / (1.0 + float(np.std(dg_values)))
+
+
+def overhang_thermo_stats(sites: Iterable[str], temp_C: float = 37.0) -> dict[str, float]:
+    """Compute thermodynamic summary statistics for a set of GG overhangs.
+
+    Provides metrics useful for correlating thermodynamic properties of an
+    optimized junction set with experimental assembly performance.  A large
+    range_dG or std_dG indicates highly variable overhang strength, which
+    can drive biased product formation.
+
+    Args:
+        sites: Iterable of GG overhang sequences.
+        temp_C: Temperature for ΔG calculation (default 37 °C).
+
+    Returns:
+        Dict with keys:
+            mean_dG          – mean ΔG across all sites (kcal/mol)
+            std_dG           – std dev of ΔG; the uniformity penalty term
+            min_dG           – most stable/strongest site (most negative)
+            max_dG           – least stable/weakest site (least negative)
+            range_dG         – max_dG - min_dG; total spread in stability
+            uniformity_score – 1 / (1 + std_dG); 1.0 = perfectly uniform
+    """
+    site_list = list(sites)
+    if not site_list:
+        nan = float('nan')
+        return {
+            'mean_dG': nan, 'std_dG': nan, 'min_dG': nan,
+            'max_dG': nan, 'range_dG': nan, 'uniformity_score': nan
+        }
+    dg = np.array([overhang_dG(s, temp_C) for s in site_list])
+    std = float(np.std(dg))
+    return {
+        'mean_dG': float(np.mean(dg)),
+        'std_dG': std,
+        'min_dG': float(np.min(dg)),
+        'max_dG': float(np.max(dg)),
+        'range_dG': float(np.max(dg) - np.min(dg)),
+        'uniformity_score': 1.0 / (1.0 + std),
+    }

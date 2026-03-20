@@ -46,6 +46,8 @@ def genes(
         min_size: int = 40,
         optimization: str = 'simulated_annealing',
         gc_weight: float = 0.0,
+        thermo_weight: float = 0.0,
+        thermo_temp_C: float = 37.0,
         nfrags_override: Optional[int] = None,
         dev: bool = False
 ) -> None:
@@ -76,6 +78,14 @@ def genes(
         gc_weight: Weight applied to the GC-balance score during optimization. 0.0 disables
             the GC term (pure fidelity). Values around 0.05-0.1 are a reasonable starting
             point when GC balance is a concern.
+        thermo_weight: Weight applied to the thermodynamic uniformity score during
+            optimization.  Penalises overhang sets where some sites bind much more
+            strongly than others (high sigma in dG), which correlates with biased product
+            formation.  0.0 disables the term.  Values around 0.05-0.2 are a reasonable
+            starting point.
+        thermo_temp_C: Temperature (degrees C) for dG calculations used in both
+            optimization and output reporting.  Default 37 matches standard BsaI/T4
+            conditions.
 
     """
     #pylint: disable=too-many-arguments, too-many-locals
@@ -133,7 +143,9 @@ def genes(
         njobs=njobs,
         ligation_data=ligation_data.data,
         optimization=optimization,
-        gc_weight=gc_weight
+        gc_weight=gc_weight,
+        thermo_weight=thermo_weight,
+        thermo_temp_C=thermo_temp_C
     )
 
     optimized_library = library.package_library(add_primers=add_primers, pad_oligo=pad_oligos)
@@ -157,7 +169,8 @@ def genes(
             'pfwd_name':p.fprimer.name,
             'pfwd_sequence':p.fprimer.sequence,
             'prev_name':p.rprimer.name,
-            'prev_sequence':p.rprimer.sequence
+            'prev_sequence':p.rprimer.sequence,
+            **(p.thermo_stats or {}),
         } for p, fidelity, seed in library.optimized_pools]
     )
     pool_stats.to_csv(join(output_dir, 'pool_stats.csv'))
