@@ -181,7 +181,7 @@ class Library:
 
 
     def estimate_nfrags(self) -> int:
-        """Esitmate the number of fragments the longest gene has to be broken into.
+        """Estimate the number of fragments the longest gene has to be broken into.
         This value is used to fragment all genes in the library into the same number.
         This is to ward against variable assembly efficiencies due to fragment number.
 
@@ -207,7 +207,7 @@ class Library:
         )
 
         for nfrags in count(1):
-            if longest_gene // nfrags <= coding_space:
+            if ceil(longest_gene / nfrags) <= coding_space:
                 return nfrags
 
         return None
