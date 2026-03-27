@@ -89,7 +89,8 @@ class Library:
         downstream_bbsite: str,
         other_used_sites: Union[np.ndarray, None],
         illegal_dna_sequences: tuple[str],
-        min_size: int = 40
+        min_size: int = 40,
+        wiggle_room: int = 24
     ):
 
         self.genes = genes
@@ -101,7 +102,7 @@ class Library:
         self.other_used_sites = other_used_sites or np.array([])
         self.illegal_dna_sequences = illegal_dna_sequences
         self.min_size = min_size
-        self.nfrags = self.estimate_nfrags()
+        self.nfrags = self.estimate_nfrags(wiggle_room=wiggle_room)
 
 
         self._max_primer_space = self.__get_max_primer_space()
@@ -114,7 +115,7 @@ class Library:
     #? TODO: Be careful - you have two things labelled 'optimize_pools' - you need to change that.
     def optimize_pools(
             self, nopt_steps: int, njobs: int, njunctions: int, ligation_data: pd.DataFrame,
-            optimization: str, nopt_runs: Optional[int] = None, opt_seeds: Optional[list[int]] = None
+            optimization: str, wiggle_room: int, nopt_runs: Optional[int] = None, opt_seeds: Optional[list[int]] = None
     ) -> list["Pool"]:
         """Optimize each pool in the library. Each pool is run for the number of nopt_runs
         with each run using a different random seed.
@@ -130,11 +131,11 @@ class Library:
         """
         #pylint:disable=line-too-long
         
-        ngenes_per_pool = (njunctions - len([s for s in [self.upstream_bbsite, self.downstream_bbsite] if s]) - len(self.other_used_sites)) // (self.estimate_nfrags() - 1)
+        ngenes_per_pool = (njunctions - len([s for s in [self.upstream_bbsite, self.downstream_bbsite] if s]) - len(self.other_used_sites)) // (self.estimate_nfrags(wiggle_room=wiggle_room) - 1)
         npools = ceil(len(self.genes) / ngenes_per_pool)
 
         print(f"Target number of genes per pool: {ngenes_per_pool} genes assembled in {npools} pools.")
-        print(f"Genes are broken into {self.estimate_nfrags()} fragments.")
+        print(f"Genes are broken into {self.estimate_nfrags(wiggle_room=wiggle_room)} fragments.")
 
         # if not enough primers for estimated pools, raise error
         if len(self.primers) < (len(self.genes)/ngenes_per_pool):
@@ -180,7 +181,7 @@ class Library:
         self.optimized_pools = optimized
 
 
-    def estimate_nfrags(self) -> int:
+    def estimate_nfrags(self, wiggle_room) -> int:
         """Estimate the number of fragments the longest gene has to be broken into.
         This value is used to fragment all genes in the library into the same number.
         This is to ward against variable assembly efficiencies due to fragment number.
@@ -200,7 +201,7 @@ class Library:
         longest_gene = max(map(len, [g[1] for g in self.genes]))
         # subtract some bp from oligo_len so we do not get sequences that pefectly fit oligo_len
         coding_space = get_coding_space(
-            self.oligo_len-24,
+            self.oligo_len-wiggle_room,
             fprimer=longest_primers[0],
             rprimer=longest_primers[1],
             enzyme=self.enzyme
