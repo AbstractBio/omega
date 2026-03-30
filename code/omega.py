@@ -45,7 +45,8 @@ def genes(
         oligo_len: int = 300,
         min_size: int = 40,
         optimization: str = 'simulated_annealing',
-        dev: bool = False
+        dev: bool = False,
+        wiggle_room: int = 24
 ) -> None:
     """
     Design library for pooled golden gate assembly.
@@ -106,7 +107,8 @@ def genes(
         downstream_bbsite=downstream_bbsite,
         other_used_sites=other_used_sites,
         illegal_dna_sequences=illegal_dna_sequences,
-        min_size=min_size
+        min_size=min_size,
+        wiggle_room=wiggle_room
     )
     
     # assign optimization seeds - use nopt_runs to get random_opt seeds
@@ -126,7 +128,8 @@ def genes(
         opt_seeds=random_seeds,
         njobs=njobs,
         ligation_data=ligation_data.data,
-        optimization=optimization
+        optimization=optimization,
+        wiggle_room=wiggle_room
     )
 
     optimized_library = library.package_library(add_primers=add_primers, pad_oligo=pad_oligos)
