@@ -46,7 +46,8 @@ def genes(
         min_size: int = 40,
         optimization: str = 'simulated_annealing',
         dev: bool = False,
-        wiggle_room: int = 24
+        wiggle_room: int = 24,
+        gc_weight: float = 0.0
 ) -> None:
     """
     Design library for pooled golden gate assembly.
