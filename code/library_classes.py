@@ -21,6 +21,9 @@ from joblib import Parallel, delayed
 #pylint:disable=too-many-instance-attributes
 #pylint:disable=too-many-arguments
 
+MAX_START_SITE_ATTEMPTS = 10000
+MAX_CANDIDATE_SELECTION_ATTEMPTS = 500
+
 
 def get_coding_space(oligo_len: int, fprimer: str, rprimer: str, enzyme: Enzyme) -> int:
     """Estimate coding space in oligo that can be used for encoding constructs."""
@@ -90,7 +93,8 @@ class Library:
         other_used_sites: Union[np.ndarray, None],
         illegal_dna_sequences: tuple[str],
         min_size: int = 40,
-        wiggle_room: int = 24
+        wiggle_room: int = 24,
+        forced_cut_sites: bool = False,
     ):
 
         self.genes = genes
@@ -102,6 +106,7 @@ class Library:
         self.other_used_sites = other_used_sites or np.array([])
         self.illegal_dna_sequences = illegal_dna_sequences
         self.min_size = min_size
+        self.forced_cut_sites = forced_cut_sites
         self.nfrags = self.estimate_nfrags(wiggle_room=wiggle_room)
 
 
@@ -313,7 +318,7 @@ class Pool:
             [random.choice(c) for c in candidates]
         )
 
-        for _ in count():
+        for _ in range(MAX_START_SITE_ATTEMPTS):
 
             change_idx = random.choice(range(len(candidates)))
             new_sites = np.copy(selected_sites)
@@ -329,6 +334,11 @@ class Pool:
                     # need to make pos integer
                     g.assigned_sites = pd.DataFrame.from_dict([{'ggsite':s[0], 'pos':int(s[1])} for s in sites])
                 break
+        else:
+            raise RuntimeError(
+                f"Pool {self.name}: failed to assign orthogonal start junctions "
+                f"after {MAX_START_SITE_ATTEMPTS} attempts."
+            )
 
 
 
@@ -517,7 +527,7 @@ class SAPool:
             [random.choice(c) for c in candidates]
         )
 
-        for _ in count():
+        for _ in range(MAX_START_SITE_ATTEMPTS):
 
             change_idx = random.choice(range(len(candidates)))
             new_sites = np.copy(selected_sites)
@@ -533,6 +543,11 @@ class SAPool:
                     # need to make pos integer
                     g.assigned_sites = pd.DataFrame.from_dict([{'ggsite':s[0], 'pos':int(s[1])} for s in sites])
                 break
+        else:
+            raise RuntimeError(
+                f"SAPool {self.name}: failed to assign orthogonal start junctions "
+                f"after {MAX_START_SITE_ATTEMPTS} attempts."
+            )
 
 
     def optimize(self, nopt_steps: int, random_seed: int, disable_progress: bool = False) -> float:
@@ -559,7 +574,14 @@ class SAPool:
         # change log range
         for temp in tqdm(np.linspace(start_temp, end_temp, nopt_steps), ncols=100, total=nopt_steps, disable=disable_progress, leave=True):
 
+            candidate_attempts = 0
             while True:
+                candidate_attempts += 1
+                if candidate_attempts > MAX_CANDIDATE_SELECTION_ATTEMPTS:
+                    raise RuntimeError(
+                        f"SAPool {self.name}: unable to find valid candidate junction set "
+                        f"after {MAX_CANDIDATE_SELECTION_ATTEMPTS} attempts at temperature {temp}."
+                    )
                 change_idx: int = random.choice(range(len(self.genes)))
                 # pool sites from the genes
                 other_sites = [g.assigned_sites.ggsite.to_numpy() for i, g in enumerate(self.genes) if i != change_idx]

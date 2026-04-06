@@ -47,7 +47,8 @@ def genes(
         optimization: str = 'simulated_annealing',
         dev: bool = False,
         wiggle_room: int = 24,
-        gc_weight: float = 0.0
+        gc_weight: float = 0.0,
+        forced_cut_sites: bool = False
 ) -> None:
     """
     Design library for pooled golden gate assembly.
@@ -73,6 +74,8 @@ def genes(
             uses a different random seed.
         njobs: Number of CPUs to use for simultaneous optimization runs. Each CPU executes
             one run.
+        forced_cut_sites: If True, this bin was marked upstream as requiring
+            forced handling for internal cut sites.
 
     """
     #pylint: disable=too-many-arguments, too-many-locals
@@ -97,6 +100,7 @@ def genes(
     print(f"Maximum number of GG sites allowed per pool: {njunctions}")
     print(f"Upstream backbone site: {upstream_bbsite}")
     print(f"Downstream backbone site: {downstream_bbsite}")
+    print(f"Forced cut-site mode: {forced_cut_sites}")
 
 
     library = Library(
@@ -109,7 +113,8 @@ def genes(
         other_used_sites=other_used_sites,
         illegal_dna_sequences=illegal_dna_sequences,
         min_size=min_size,
-        wiggle_room=wiggle_room
+        wiggle_room=wiggle_room,
+        forced_cut_sites=forced_cut_sites,
     )
     
     # assign optimization seeds - use nopt_runs to get random_opt seeds
