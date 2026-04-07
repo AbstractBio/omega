@@ -1,7 +1,7 @@
 """Design oligopool for scalable gene assembly."""
 
 import os
-from os.path import join, exists
+from os.path import join, exists, basename
 from typing import Optional, Union
 import random
 
@@ -101,6 +101,13 @@ def genes(
     print(f"Upstream backbone site: {upstream_bbsite}")
     print(f"Downstream backbone site: {downstream_bbsite}")
     print(f"Forced cut-site mode: {forced_cut_sites}")
+
+    inferred_forced = basename(input_seqs).startswith("ALL_forced_")
+    if inferred_forced and not forced_cut_sites:
+        raise RuntimeError(
+            "Input appears to be an ALL_forced bin but forced_cut_sites is False. "
+            "Refusing to continue because forced junctions would be ignored."
+        )
 
 
     library = Library(

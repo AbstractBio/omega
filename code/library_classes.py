@@ -41,22 +41,25 @@ def _find_overlapping_matches(sequence: str, motif: str) -> list[int]:
 
 
 def find_internal_cut_junctions(sequence: str, enzyme: Enzyme) -> list[tuple[str, int]]:
-    """Infer internal junction overhangs and split positions from enzyme sites."""
+    """Infer internal junction overhangs and split positions from enzyme sites.
+
+    Split points are anchored at the midpoint of each internal recognition-site
+    match so the internal site is split across adjacent fragments.
+    """
 
     seq = str(sequence).upper()
     junctions = {}
 
-    forward_offset = len(enzyme.seq) + enzyme.padding
-    reverse_offset = enzyme.padding + enzyme.site_size
+    split_offset = len(enzyme.seq) // 2
 
     for idx in _find_overlapping_matches(seq, enzyme.seq):
-        pos = idx + forward_offset
+        pos = idx + split_offset
         if 0 <= pos <= len(seq) - enzyme.site_size:
             junctions[pos] = seq[pos:pos + enzyme.site_size]
 
     if enzyme.revc_seq != enzyme.seq:
         for idx in _find_overlapping_matches(seq, enzyme.revc_seq):
-            pos = idx - reverse_offset
+            pos = idx + split_offset
             if 0 <= pos <= len(seq) - enzyme.site_size:
                 junctions[pos] = seq[pos:pos + enzyme.site_size]
 
