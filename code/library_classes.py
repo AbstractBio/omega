@@ -405,9 +405,37 @@ class Pool:
             [random.choice(c) for c in candidates]
         )
 
+        # A window is fixed when it has exactly one option and that option is a forced site.
+        is_fixed = [len(c) == 1 and bool(c[0][2]) for c in candidates]
+        movable_indices = [i for i, fixed in enumerate(is_fixed) if not fixed]
+
+        # Fail fast when fixed junctions from different genes already conflict.
+        fixed_ggsites = [str(selected_sites[i][0]) for i, fixed in enumerate(is_fixed) if fixed]
+        if fixed_ggsites:
+            fixed_wc = [str(Seq(s).reverse_complement()) for s in fixed_ggsites]
+            if len(set(fixed_ggsites + fixed_wc)) < len(fixed_ggsites) * 2:
+                raise RuntimeError(
+                    f"Pool {self.name}: internal enzyme cut sites produce conflicting "
+                    "(non-orthogonal) overhangs across genes in this pool. "
+                    "These genes cannot share a pool under forced cut-site mode."
+                )
+
+        # Edge case: no movable windows — check current state immediately.
+        if not movable_indices:
+            if unique_orthogonal(selected_sites[:,0]):
+                for sites, g in zip(chunked(selected_sites, self.nfrags-1), self.genes):
+                    g.assigned_sites = pd.DataFrame.from_dict([
+                        {'ggsite':s[0], 'pos':int(s[1]), 'fixed':bool(s[2])} for s in sites
+                    ])
+                return
+            raise RuntimeError(
+                f"Pool {self.name}: all junctions are fixed but are not orthogonal "
+                "— no movable junctions available to resolve the conflict."
+            )
+
         for _ in range(MAX_START_SITE_ATTEMPTS):
 
-            change_idx = random.choice(range(len(candidates)))
+            change_idx = random.choice(movable_indices)
             new_sites = np.copy(selected_sites)
             new = random.choice(candidates[change_idx])
             new_sites[change_idx] = new
@@ -619,9 +647,37 @@ class SAPool:
             [random.choice(c) for c in candidates]
         )
 
+        # A window is fixed when it has exactly one option and that option is a forced site.
+        is_fixed = [len(c) == 1 and bool(c[0][2]) for c in candidates]
+        movable_indices = [i for i, fixed in enumerate(is_fixed) if not fixed]
+
+        # Fail fast when fixed junctions from different genes already conflict.
+        fixed_ggsites = [str(selected_sites[i][0]) for i, fixed in enumerate(is_fixed) if fixed]
+        if fixed_ggsites:
+            fixed_wc = [str(Seq(s).reverse_complement()) for s in fixed_ggsites]
+            if len(set(fixed_ggsites + fixed_wc)) < len(fixed_ggsites) * 2:
+                raise RuntimeError(
+                    f"SAPool {self.name}: internal enzyme cut sites produce conflicting "
+                    "(non-orthogonal) overhangs across genes in this pool. "
+                    "These genes cannot share a pool under forced cut-site mode."
+                )
+
+        # Edge case: no movable windows — check current state immediately.
+        if not movable_indices:
+            if unique_orthogonal(selected_sites[:,0]):
+                for sites, g in zip(chunked(selected_sites, self.nfrags-1), self.genes):
+                    g.assigned_sites = pd.DataFrame.from_dict([
+                        {'ggsite':s[0], 'pos':int(s[1]), 'fixed':bool(s[2])} for s in sites
+                    ])
+                return
+            raise RuntimeError(
+                f"SAPool {self.name}: all junctions are fixed but are not orthogonal "
+                "— no movable junctions available to resolve the conflict."
+            )
+
         for _ in range(MAX_START_SITE_ATTEMPTS):
 
-            change_idx = random.choice(range(len(candidates)))
+            change_idx = random.choice(movable_indices)
             new_sites = np.copy(selected_sites)
             new = random.choice(candidates[change_idx])
             new_sites[change_idx] = new
