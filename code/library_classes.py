@@ -1092,14 +1092,47 @@ class Gene:
             
         extra_sites = {f'extra_ggsite_{i}':s for i, s in enumerate(self.other_used_sites)}
         ggsites = ggsites = {f'ggsite_{i}':site for i, site in enumerate(self.assigned_sites.sort_values('pos', ascending=True).ggsite)}
+        # Emit assigned and fixed breakpoint positions so forced-cut behavior is
+        # directly auditable in optimization_results.csv.
+        assigned_positions = self.assigned_sites.sort_values('pos', ascending=True).pos.astype(int).tolist()
+        fixed_positions = self.fixed_sites.sort_values('pos', ascending=True).pos.astype(int).tolist() if not self.fixed_sites.empty else []
+        forced_meta = {
+            'forced_cut_sites_enabled': bool(self.forced_cut_sites),
+            'assigned_break_positions': ";".join(map(str, assigned_positions)),
+            'fixed_break_positions': ";".join(map(str, fixed_positions)),
+        }
         primers = {'fwd_primer':self.fprimer.sequence, 'rev_primer':self.rprimer.sequence}
 
-        return output | oligos | bbsites | ggsites | extra_sites | primers
+        return output | oligos | bbsites | ggsites | extra_sites | forced_meta | primers
+
+    def _validate_forced_sites_present(self) -> None:
+        """Ensure all forced cut-site breakpoints are retained in assigned sites."""
+
+        if not self.forced_cut_sites:
+            return
+        if self.fixed_sites.empty:
+            return
+        if self.assigned_sites is None or self.assigned_sites.empty:
+            raise RuntimeError(
+                f"Gene {self.name}: no assigned sites are available while forced_cut_sites is enabled."
+            )
+
+        assigned_positions = set(self.assigned_sites.pos.astype(int).tolist())
+        fixed_positions = set(self.fixed_sites.pos.astype(int).tolist())
+        missing_positions = sorted(fixed_positions - assigned_positions)
+        if missing_positions:
+            raise RuntimeError(
+                f"Gene {self.name}: forced cut-site positions were not retained in assigned junctions: "
+                f"{missing_positions}."
+            )
 
     def __fragment_gene(self) -> list[str]:
         """Break gene into fragments based on optimized sites. Adds in GG sites
         Required to assemble all fragments together including any backbone sites.
         """
+
+        # Defensive check: forced-cut mode must always keep internal fixed sites.
+        self._validate_forced_sites_present()
 
         broken_gene = np.array_split(
             np.array(list(self.seq)),
