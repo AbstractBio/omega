@@ -25,6 +25,77 @@ MAX_START_SITE_ATTEMPTS = 10000
 MAX_CANDIDATE_SELECTION_ATTEMPTS = 500
 
 
+def _find_overlapping_matches(sequence: str, motif: str) -> list[int]:
+    """Return overlapping motif matches in sequence."""
+
+    positions = []
+    start = 0
+    while True:
+        idx = sequence.find(motif, start)
+        if idx == -1:
+            break
+        positions.append(idx)
+        start = idx + 1
+
+    return positions
+
+
+def find_internal_cut_junctions(sequence: str, enzyme: Enzyme) -> list[tuple[str, int]]:
+    """Infer internal junction overhangs and split positions from enzyme sites."""
+
+    seq = str(sequence).upper()
+    junctions = {}
+
+    forward_offset = len(enzyme.seq) + enzyme.padding
+    reverse_offset = enzyme.padding + enzyme.site_size
+
+    for idx in _find_overlapping_matches(seq, enzyme.seq):
+        pos = idx + forward_offset
+        if 0 <= pos <= len(seq) - enzyme.site_size:
+            junctions[pos] = seq[pos:pos + enzyme.site_size]
+
+    if enzyme.revc_seq != enzyme.seq:
+        for idx in _find_overlapping_matches(seq, enzyme.revc_seq):
+            pos = idx - reverse_offset
+            if 0 <= pos <= len(seq) - enzyme.site_size:
+                junctions[pos] = seq[pos:pos + enzyme.site_size]
+
+    return [(ggsite, pos) for pos, ggsite in sorted(junctions.items())]
+
+
+def allocate_fragment_counts(segment_lengths: list[int], total_fragments: int) -> list[int]:
+    """Allocate target fragment counts across segments while preserving at least one per segment."""
+
+    if total_fragments < len(segment_lengths):
+        raise ValueError('Total fragments cannot be smaller than the number of forced segments.')
+
+    total_length = sum(segment_lengths)
+    if total_length <= 0:
+        return [1 for _ in segment_lengths]
+
+    ideal_fragments = [length * total_fragments / total_length for length in segment_lengths]
+    fragment_counts = [max(1, int(np.floor(value))) for value in ideal_fragments]
+
+    while sum(fragment_counts) < total_fragments:
+        idx = max(
+            range(len(segment_lengths)),
+            key=lambda i: (ideal_fragments[i] - fragment_counts[i], segment_lengths[i])
+        )
+        fragment_counts[idx] += 1
+
+    while sum(fragment_counts) > total_fragments:
+        candidates = [i for i, count in enumerate(fragment_counts) if count > 1]
+        if not candidates:
+            break
+        idx = min(
+            candidates,
+            key=lambda i: (ideal_fragments[i] - fragment_counts[i], segment_lengths[i])
+        )
+        fragment_counts[idx] -= 1
+
+    return fragment_counts
+
+
 def get_coding_space(oligo_len: int, fprimer: str, rprimer: str, enzyme: Enzyme) -> int:
     """Estimate coding space in oligo that can be used for encoding constructs."""
     #pylint:disable=line-too-long
@@ -35,7 +106,8 @@ def optimize_pools(
     name: Any, genes: list[tuple[Any, str]], enzyme: Enzyme, upstream_bbsite: str,
     downstream_bbsite: str, other_used_sites: Union[list[str], None],
     forward_primer: Union[str, None], reverse_primer: Union[str, None], illegal_dna_sequences: tuple[str], oligo_len: int,
-    nfrags: int, ligation_data: np.ndarray, nopt_steps: int, random_seed: int, optimization: str
+    nfrags: int, ligation_data: np.ndarray, nopt_steps: int, random_seed: int, optimization: str,
+    forced_cut_sites: bool = False,
 ) -> tuple["Pool", float, int]:
     """Optimize a single subassembly pool. Called by Library."""
 
@@ -52,7 +124,8 @@ def optimize_pools(
             oligo_len=oligo_len,
             nfrags=nfrags,
             ligation_data=ligation_data,
-            illegal_dna_sequences=illegal_dna_sequences
+            illegal_dna_sequences=illegal_dna_sequences,
+            forced_cut_sites=forced_cut_sites,
         )
 
     elif optimization == 'simulated_annealing':
@@ -68,7 +141,8 @@ def optimize_pools(
             oligo_len=oligo_len,
             nfrags=nfrags,
             ligation_data=ligation_data,
-            illegal_dna_sequences=illegal_dna_sequences
+            illegal_dna_sequences=illegal_dna_sequences,
+            forced_cut_sites=forced_cut_sites,
         )
 
     else:
@@ -136,11 +210,11 @@ class Library:
         """
         #pylint:disable=line-too-long
         
-        ngenes_per_pool = (njunctions - len([s for s in [self.upstream_bbsite, self.downstream_bbsite] if s]) - len(self.other_used_sites)) // (self.estimate_nfrags(wiggle_room=wiggle_room) - 1)
+        ngenes_per_pool = (njunctions - len([s for s in [self.upstream_bbsite, self.downstream_bbsite] if s]) - len(self.other_used_sites)) // (self.nfrags - 1)
         npools = ceil(len(self.genes) / ngenes_per_pool)
 
         print(f"Target number of genes per pool: {ngenes_per_pool} genes assembled in {npools} pools.")
-        print(f"Genes are broken into {self.estimate_nfrags(wiggle_room=wiggle_room)} fragments.")
+        print(f"Genes are broken into {self.nfrags} fragments.")
 
         # if not enough primers for estimated pools, raise error
         if len(self.primers) < (len(self.genes)/ngenes_per_pool):
@@ -172,7 +246,8 @@ class Library:
                 ligation_data=ligation_data,
                 nopt_steps=nopt_steps,
                 random_seed=rand_seed,
-                optimization=optimization
+                optimization=optimization,
+                forced_cut_sites=self.forced_cut_sites,
             ) for rand_seed in opt_seeds)
 
             opt_results.sort(key=lambda x: x[1])
@@ -214,7 +289,16 @@ class Library:
 
         for nfrags in count(1):
             if ceil(longest_gene / nfrags) <= coding_space:
-                return nfrags
+                break
+
+        if self.forced_cut_sites:
+            max_internal_cuts = max(
+                len(find_internal_cut_junctions(sequence, self.enzyme))
+                for _, sequence in self.genes
+            )
+            return nfrags + max_internal_cuts
+
+        return nfrags
 
         return None
 
@@ -265,7 +349,8 @@ class Pool:
         illegal_dna_sequences: tuple[str],
         oligo_len,
         nfrags,
-        ligation_data
+        ligation_data,
+        forced_cut_sites: bool = False,
     ):
         self.name = name
         self.enzyme = enzyme
@@ -279,6 +364,7 @@ class Pool:
         self.nfrags = nfrags
         self.ligation_data = ligation_data
         self.illegal_dna_sequences = illegal_dna_sequences
+        self.forced_cut_sites = forced_cut_sites
 
         self.genes = self.__instantiate_genes(genes)
         self.__assign_start_sites()
@@ -302,7 +388,8 @@ class Pool:
                 self.fprimer,
                 self.rprimer,
                 self.oligo_len,
-                self.illegal_dna_sequences
+                self.illegal_dna_sequences,
+                forced_cut_sites=self.forced_cut_sites,
             ) for i,g in genes
         ]
 
@@ -332,7 +419,9 @@ class Pool:
             if unique_orthogonal(selected_sites[:,0]):
                 for sites, g in zip(chunked(selected_sites, self.nfrags-1), self.genes):
                     # need to make pos integer
-                    g.assigned_sites = pd.DataFrame.from_dict([{'ggsite':s[0], 'pos':int(s[1])} for s in sites])
+                    g.assigned_sites = pd.DataFrame.from_dict([
+                        {'ggsite':s[0], 'pos':int(s[1]), 'fixed':bool(s[2])} for s in sites
+                    ])
                 break
         else:
             raise RuntimeError(
@@ -472,7 +561,8 @@ class SAPool:
         illegal_dna_sequences: tuple[str],
         oligo_len,
         nfrags,
-        ligation_data
+        ligation_data,
+        forced_cut_sites: bool = False,
     ):
         self.name = name
         self.enzyme = enzyme
@@ -485,6 +575,7 @@ class SAPool:
         self.nfrags = nfrags
         self.ligation_data = ligation_data
         self.illegal_dna_sequences = illegal_dna_sequences
+        self.forced_cut_sites = forced_cut_sites
 
         self.genes = self.__instantiate_genes(genes)
         self.__assign_start_sites()
@@ -510,7 +601,8 @@ class SAPool:
                 self.fprimer,
                 self.rprimer,
                 self.oligo_len,
-                self.illegal_dna_sequences
+                self.illegal_dna_sequences,
+                forced_cut_sites=self.forced_cut_sites,
             ) for i,g in genes
         ]
 
@@ -541,7 +633,9 @@ class SAPool:
             if unique_orthogonal(selected_sites[:,0]):
                 for sites, g in zip(chunked(selected_sites, self.nfrags-1), self.genes):
                     # need to make pos integer
-                    g.assigned_sites = pd.DataFrame.from_dict([{'ggsite':s[0], 'pos':int(s[1])} for s in sites])
+                    g.assigned_sites = pd.DataFrame.from_dict([
+                        {'ggsite':s[0], 'pos':int(s[1]), 'fixed':bool(s[2])} for s in sites
+                    ])
                 break
         else:
             raise RuntimeError(
@@ -722,7 +816,8 @@ class Gene:
         forward_primer: str,
         reverse_primer: str,
         oligo_len: int,
-        illegal_dna_sequences: tuple[str]
+        illegal_dna_sequences: tuple[str],
+        forced_cut_sites: bool = False,
     ):
         self.name = name
         self.seq = sequence.upper()
@@ -732,6 +827,7 @@ class Gene:
         self.other_used_sites = [s for s in (other_used_sites or []) if s]
         self.oligo_len = oligo_len
         self.illegal_dna_sequences = illegal_dna_sequences
+        self.forced_cut_sites = forced_cut_sites
 
         self.fprimer = forward_primer
         self.rprimer = reverse_primer
@@ -741,7 +837,23 @@ class Gene:
         )
 
         self.ggsite_options = self.__populate_sites()
+        self.fixed_sites = self.__get_fixed_sites()
         self.assigned_sites = None
+
+    def __get_fixed_sites(self) -> pd.DataFrame:
+        """Build immutable junctions derived from internal enzyme cut sites."""
+
+        if not self.forced_cut_sites:
+            return pd.DataFrame(columns=['ggsite', 'pos', 'fixed'])
+
+        fixed_sites = [
+            {'ggsite':ggsite, 'pos':pos, 'fixed':True}
+            for ggsite, pos in find_internal_cut_junctions(self.seq, self.enzyme)
+        ]
+        if not fixed_sites:
+            return pd.DataFrame(columns=['ggsite', 'pos', 'fixed'])
+
+        return pd.DataFrame.from_dict(fixed_sites).drop_duplicates(subset=['pos']).sort_values('pos').reset_index(drop=True)
 
     def __populate_sites(self) -> pd.DataFrame:
         """Find all possible GG site options that are compatible with fragmentation constraints."""
@@ -768,36 +880,79 @@ class Gene:
         #pylint:disable=line-too-long
 
         gene_length = len(self.seq)
+        total_sites = nfrags - 1
+        fixed_sites = self.fixed_sites.sort_values('pos').reset_index(drop=True)
+        if fixed_sites.shape[0] > total_sites:
+            raise ValueError(
+                f"Gene {self.name}: found {fixed_sites.shape[0]} internal cut junctions but only "
+                f"{total_sites} total junctions were allocated."
+            )
 
-        # fragment size
-        step_size = ceil(gene_length / nfrags)
-        centroids = np.hstack([
-            np.array([0]),
-            np.array(list(range(step_size, gene_length, step_size))),
-            np.array([gene_length-1])
-        ])
-        biggest_diff = np.diff(centroids).max()
-        half_step = (self.coding_space - biggest_diff) // 2  # rounds down
+        segment_edges = [0] + fixed_sites['pos'].tolist() + [gene_length]
+        segment_lengths = [right - left for left, right in zip(segment_edges[:-1], segment_edges[1:])]
+        segment_fragments = allocate_fragment_counts(segment_lengths, nfrags)
 
-        start_candidates = []
-        for c in centroids[1:-1]:
-            start_candidates.append(self.ggsite_options.set_index('pos', drop=False).loc[c-half_step:c+half_step].sample(frac=1.0, random_state=42))
+        candidate_windows = []
+        fixed_positions = set(fixed_sites['pos'].tolist())
+        for _, row in fixed_sites.iterrows():
+            candidate_windows.append((int(row['pos']), [(row['ggsite'], int(row['pos']), True)]))
 
-        return [list(zip(df.loc[:,'ggsite'], df.loc[:,'pos'])) for df in start_candidates]
+        for (left_edge, right_edge), segment_nfrags in zip(zip(segment_edges[:-1], segment_edges[1:]), segment_fragments):
+            if segment_nfrags <= 1:
+                continue
+
+            segment_length = right_edge - left_edge
+            centroids = [
+                int(round(left_edge + (segment_length * idx / segment_nfrags)))
+                for idx in range(1, segment_nfrags)
+            ]
+            boundaries = [left_edge] + centroids + [right_edge]
+            biggest_diff = max(np.diff(boundaries)) if len(boundaries) > 1 else segment_length
+            half_step = max((self.coding_space - biggest_diff) // 2, 0)
+
+            for centroid in centroids:
+                left_bound = max(left_edge, centroid - half_step)
+                right_bound = min(right_edge - self.enzyme.site_size, centroid + half_step)
+                candidates = self.ggsite_options[self.ggsite_options.pos.between(left_bound, right_bound)]
+                candidates = candidates[~candidates.pos.isin(fixed_positions)]
+
+                if candidates.empty:
+                    candidates = self.ggsite_options[self.ggsite_options.pos.between(left_edge, right_edge - self.enzyme.site_size)]
+                    candidates = candidates[~candidates.pos.isin(fixed_positions)]
+
+                if candidates.empty:
+                    raise ValueError(
+                        f"Gene {self.name}: no movable GG-site candidates found between forced cut sites "
+                        f"for segment {left_edge}-{right_edge}."
+                    )
+
+                shuffled = candidates.sample(frac=1.0, random_state=42)
+                candidate_windows.append((centroid, [
+                    (row.ggsite, int(row.pos), False) for row in shuffled.itertuples(index=False)
+                ]))
+
+        candidate_windows.sort(key=lambda item: item[0])
+        return [candidate_list for _, candidate_list in candidate_windows]
 
     def shuffle_site(self, pool_ggsites: np.ndarray, min_dist: int):
         """Return pd.DataFrame of site candidates."""
 
         # make sure that assigned sites are in order
+        if 'fixed' not in self.assigned_sites.columns:
+            self.assigned_sites['fixed'] = False
         self.assigned_sites.sort_values('pos', ascending=True, inplace=True)
+        mutable_indexes = self.assigned_sites.index[~self.assigned_sites['fixed']].tolist()
+        if not mutable_indexes:
+            return self.assigned_sites.copy()
 
         # try to change sites 10 times before giving up:
         for _ in range(50):
             # print(self.assigned_sites)
-            change_loc = random.choice(range(self.assigned_sites.shape[0]))
+            change_loc = random.choice(mutable_indexes)
             keep_sites = self.assigned_sites.iloc[
                 [i for i in range(self.assigned_sites.shape[0]) if i != change_loc]
             ]
+            keep_sites = keep_sites.sort_values('pos', ascending=True)
 
             sections = np.split(np.arange(len(self.seq)), keep_sites.pos.to_numpy())
             longest_section = np.argmax(np.array(list(map(len, sections))))
@@ -827,7 +982,8 @@ class Gene:
                 # print(candidates[~candidates.ggsite.isin(used_sites)])
                 # print(candidates[~candidates.ggsite.isin(used_sites)].shape)
                 candidates = candidates[~candidates.ggsite.isin(used_sites)]
-                candidate = candidates.sample(n=1, random_state=42)
+                candidates = candidates[~candidates.pos.isin(keep_sites.pos.to_numpy())]
+                candidate = candidates.sample(n=1, random_state=42).assign(fixed=False)
                 return pd.concat([keep_sites, candidate])
             except:
                 continue
