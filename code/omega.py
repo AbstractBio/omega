@@ -1,5 +1,6 @@
 """Design oligopool for scalable gene assembly."""
 
+import json
 import os
 from os.path import join, exists, basename
 from typing import Optional, Union
@@ -48,7 +49,8 @@ def genes(
         dev: bool = False,
         wiggle_room: int = 24,
         gc_weight: float = 0.0,
-        forced_cut_sites: bool = False
+        forced_cut_sites: bool = False,
+        forced_offsets_file: Optional[str] = None
 ) -> None:
     """
     Design library for pooled golden gate assembly.
@@ -76,6 +78,8 @@ def genes(
             one run.
         forced_cut_sites: If True, this bin was marked upstream as requiring
             forced handling for internal cut sites.
+        forced_offsets_file: Optional JSON file mapping gene IDs to per-site
+            split offsets chosen by bin_sequences for orthogonality.
 
     """
     #pylint: disable=too-many-arguments, too-many-locals
@@ -102,13 +106,21 @@ def genes(
     print(f"Downstream backbone site: {downstream_bbsite}")
     print(f"Forced cut-site mode: {forced_cut_sites}")
 
+    # Load per-gene forced-offset map produced by bin_sequences.  This
+    # tells OMEGA exactly where to place each forced junction so that the
+    # overhangs match the orthogonality decisions made upstream.
+    forced_offsets: dict = {}
+    if forced_offsets_file and os.path.exists(forced_offsets_file):
+        with open(forced_offsets_file) as _fh:
+            forced_offsets = json.load(_fh)
+        print(f"Loaded forced offsets for {len(forced_offsets)} gene(s) from {forced_offsets_file}")
+
     inferred_forced = basename(input_seqs).startswith("ALL_forced_")
     if inferred_forced and not forced_cut_sites:
         raise RuntimeError(
             "Input appears to be an ALL_forced bin but forced_cut_sites is False. "
             "Refusing to continue because forced junctions would be ignored."
         )
-
 
     library = Library(
         genes=input_seqs_recs,
@@ -122,6 +134,7 @@ def genes(
         min_size=min_size,
         wiggle_room=wiggle_room,
         forced_cut_sites=forced_cut_sites,
+        forced_offsets=forced_offsets,
     )
     
     # assign optimization seeds - use nopt_runs to get random_opt seeds

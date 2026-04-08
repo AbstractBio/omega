@@ -40,26 +40,37 @@ def _find_overlapping_matches(sequence: str, motif: str) -> list[int]:
     return positions
 
 
-def find_internal_cut_junctions(sequence: str, enzyme: Enzyme) -> list[tuple[str, int]]:
+def find_internal_cut_junctions(
+    sequence: str,
+    enzyme: Enzyme,
+    offset_map: dict = None,
+) -> list[tuple[str, int]]:
     """Infer internal junction overhangs and split positions from enzyme sites.
 
-    Split points are anchored at the midpoint of each internal recognition-site
-    match so the internal site is split across adjacent fragments.
+    When *offset_map* is provided it must be a dict mapping each
+    recognition-site start position (int) to the split offset (int, 1-5)
+    chosen by ``bin_sequences.select_offsets_for_gene``.  This allows the
+    caller to choose variable offsets per site for overhang orthogonality.
+
+    When *offset_map* is ``None`` the midpoint of the recognition site is
+    used as a default so the site is split roughly in half.
     """
 
     seq = str(sequence).upper()
     junctions = {}
-
-    split_offset = len(enzyme.seq) // 2
+    default_offset = len(enzyme.seq) // 2
 
     for idx in _find_overlapping_matches(seq, enzyme.seq):
-        pos = idx + split_offset
+        # Use the per-site offset if provided, otherwise fall back to midpoint.
+        offset = offset_map.get(idx, default_offset) if offset_map else default_offset
+        pos = idx + offset
         if 0 <= pos <= len(seq) - enzyme.site_size:
             junctions[pos] = seq[pos:pos + enzyme.site_size]
 
     if enzyme.revc_seq != enzyme.seq:
         for idx in _find_overlapping_matches(seq, enzyme.revc_seq):
-            pos = idx + split_offset
+            offset = offset_map.get(idx, default_offset) if offset_map else default_offset
+            pos = idx + offset
             if 0 <= pos <= len(seq) - enzyme.site_size:
                 junctions[pos] = seq[pos:pos + enzyme.site_size]
 
@@ -111,6 +122,7 @@ def optimize_pools(
     forward_primer: Union[str, None], reverse_primer: Union[str, None], illegal_dna_sequences: tuple[str], oligo_len: int,
     nfrags: int, ligation_data: np.ndarray, nopt_steps: int, random_seed: int, optimization: str,
     forced_cut_sites: bool = False,
+    forced_offsets: dict = None,
 ) -> tuple["Pool", float, int]:
     """Optimize a single subassembly pool. Called by Library."""
 
@@ -129,6 +141,7 @@ def optimize_pools(
             ligation_data=ligation_data,
             illegal_dna_sequences=illegal_dna_sequences,
             forced_cut_sites=forced_cut_sites,
+            forced_offsets=forced_offsets,
         )
 
     elif optimization == 'simulated_annealing':
@@ -146,6 +159,7 @@ def optimize_pools(
             ligation_data=ligation_data,
             illegal_dna_sequences=illegal_dna_sequences,
             forced_cut_sites=forced_cut_sites,
+            forced_offsets=forced_offsets,
         )
 
     else:
@@ -172,6 +186,7 @@ class Library:
         min_size: int = 40,
         wiggle_room: int = 24,
         forced_cut_sites: bool = False,
+        forced_offsets: dict = None,
     ):
 
         self.genes = genes
@@ -184,6 +199,9 @@ class Library:
         self.illegal_dna_sequences = illegal_dna_sequences
         self.min_size = min_size
         self.forced_cut_sites = forced_cut_sites
+        # Per-gene forced-offset map from bin_sequences.  Keys are gene IDs,
+        # values are lists of {site_position, split_offset, overhang} dicts.
+        self.forced_offsets = forced_offsets or {}
         self.nfrags = self.estimate_nfrags(wiggle_room=wiggle_room)
 
 
@@ -251,6 +269,7 @@ class Library:
                 random_seed=rand_seed,
                 optimization=optimization,
                 forced_cut_sites=self.forced_cut_sites,
+                forced_offsets=self.forced_offsets,
             ) for rand_seed in opt_seeds)
 
             opt_results.sort(key=lambda x: x[1])
@@ -296,8 +315,11 @@ class Library:
 
         if self.forced_cut_sites:
             max_internal_cuts = max(
-                len(find_internal_cut_junctions(sequence, self.enzyme))
-                for _, sequence in self.genes
+                len(find_internal_cut_junctions(
+                    sequence, self.enzyme,
+                    offset_map=self._build_offset_map(gene_name),
+                ))
+                for gene_name, sequence in self.genes
             )
             return nfrags + max_internal_cuts
 
@@ -305,6 +327,18 @@ class Library:
 
         return None
 
+    def _build_offset_map(self, gene_name: str) -> dict:
+        """Convert the JSON offset list for *gene_name* into the
+        ``{site_position: split_offset}`` dict that
+        :func:`find_internal_cut_junctions` expects.
+
+        Returns an empty dict when no offsets were provided for this gene
+        (which causes the default midpoint behaviour).
+        """
+        entries = self.forced_offsets.get(gene_name, [])
+        if not entries:
+            return {}
+        return {int(e["site_position"]): int(e["split_offset"]) for e in entries}
 
     def package_library(self, add_primers: bool = True, pad_oligo: bool = True) -> pd.DataFrame:
         """Get optimization output for all pools in library."""
@@ -354,6 +388,7 @@ class Pool:
         nfrags,
         ligation_data,
         forced_cut_sites: bool = False,
+        forced_offsets: dict = None,
     ):
         self.name = name
         self.enzyme = enzyme
@@ -368,6 +403,7 @@ class Pool:
         self.ligation_data = ligation_data
         self.illegal_dna_sequences = illegal_dna_sequences
         self.forced_cut_sites = forced_cut_sites
+        self.forced_offsets = forced_offsets or {}
 
         self.genes = self.__instantiate_genes(genes)
         self.__assign_start_sites()
@@ -393,6 +429,7 @@ class Pool:
                 self.oligo_len,
                 self.illegal_dna_sequences,
                 forced_cut_sites=self.forced_cut_sites,
+                forced_offsets=self.forced_offsets.get(i, None),
             ) for i,g in genes
         ]
 
@@ -594,6 +631,7 @@ class SAPool:
         nfrags,
         ligation_data,
         forced_cut_sites: bool = False,
+        forced_offsets: dict = None,
     ):
         self.name = name
         self.enzyme = enzyme
@@ -607,6 +645,7 @@ class SAPool:
         self.ligation_data = ligation_data
         self.illegal_dna_sequences = illegal_dna_sequences
         self.forced_cut_sites = forced_cut_sites
+        self.forced_offsets = forced_offsets or {}
 
         self.genes = self.__instantiate_genes(genes)
         self.__assign_start_sites()
@@ -634,6 +673,7 @@ class SAPool:
                 self.oligo_len,
                 self.illegal_dna_sequences,
                 forced_cut_sites=self.forced_cut_sites,
+                forced_offsets=self.forced_offsets.get(i, None),
             ) for i,g in genes
         ]
 
@@ -877,6 +917,7 @@ class Gene:
         oligo_len: int,
         illegal_dna_sequences: tuple[str],
         forced_cut_sites: bool = False,
+        forced_offsets: list = None,
     ):
         self.name = name
         self.seq = sequence.upper()
@@ -887,6 +928,11 @@ class Gene:
         self.oligo_len = oligo_len
         self.illegal_dna_sequences = illegal_dna_sequences
         self.forced_cut_sites = forced_cut_sites
+        # Convert the list of offset dicts to {site_position: split_offset}.
+        self._offset_map = (
+            {int(e["site_position"]): int(e["split_offset"]) for e in forced_offsets}
+            if forced_offsets else {}
+        )
 
         self.fprimer = forward_primer
         self.rprimer = reverse_primer
@@ -900,14 +946,21 @@ class Gene:
         self.assigned_sites = None
 
     def __get_fixed_sites(self) -> pd.DataFrame:
-        """Build immutable junctions derived from internal enzyme cut sites."""
+        """Build immutable junctions derived from internal enzyme cut sites.
+
+        Uses the per-site offset map (``self._offset_map``) when available
+        so that the split positions match the orthogonality decisions made
+        by ``bin_sequences``.
+        """
 
         if not self.forced_cut_sites:
             return pd.DataFrame(columns=['ggsite', 'pos', 'fixed'])
 
         fixed_sites = [
             {'ggsite':ggsite, 'pos':pos, 'fixed':True}
-            for ggsite, pos in find_internal_cut_junctions(self.seq, self.enzyme)
+            for ggsite, pos in find_internal_cut_junctions(
+                self.seq, self.enzyme, offset_map=self._offset_map,
+            )
         ]
         if not fixed_sites:
             return pd.DataFrame(columns=['ggsite', 'pos', 'fixed'])
