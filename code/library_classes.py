@@ -1,6 +1,7 @@
 """LibraryGene class."""
 
 from typing import Union, Any, Optional
+from collections import defaultdict
 from itertools import count, chain
 import random
 import string
@@ -241,18 +242,21 @@ class Library:
         if len(self.primers) < (len(self.genes)/ngenes_per_pool):
             raise ValueError('Not enough primers for estimated number of pools.')
 
-        # run optimization for each pool
-        it = zip(
-            count(0),
-            chunked_even(self.genes, ngenes_per_pool),
-            self.primers
+        # Flatten (pool, seed) pairs into a single work list so joblib can
+        # saturate all njobs cores across pools instead of only within a pool.
+        work_items = []
+        for i, gene_pool, (pfor, prev) in zip(
+            count(0), chunked_even(self.genes, ngenes_per_pool), self.primers
+        ):
+            for rand_seed in opt_seeds:
+                work_items.append((i, gene_pool, pfor, prev, int(rand_seed)))
+
+        print(
+            f'Optimizing library ({npools} pools x {len(opt_seeds)} seeds '
+            f'= {len(work_items)} runs) across {njobs} workers...'
         )
-        optimized = []
-        #? fix this - make how you save opt trajectories better
-        all_opt_runs = []
-        print('Optimizing library...')
-        for i, gene_pool, (pfor, prev) in tqdm(it, total=npools, ncols=100):
-            opt_results = Parallel(n_jobs=njobs)(delayed(optimize_pools)(
+        all_opt_runs = Parallel(n_jobs=njobs)(
+            delayed(optimize_pools)(
                 name=i,
                 genes=gene_pool,
                 enzyme=self.enzyme,
@@ -270,14 +274,19 @@ class Library:
                 optimization=optimization,
                 forced_cut_sites=self.forced_cut_sites,
                 forced_offsets=self.forced_offsets,
-            ) for rand_seed in opt_seeds)
+            )
+            for i, gene_pool, pfor, prev, rand_seed in tqdm(work_items, ncols=100)
+        )
 
-            opt_results.sort(key=lambda x: x[1])
-            # save all opt runs
-            all_opt_runs.extend(opt_results)
-            # save only best for each pool
-            optimized.append(opt_results[-1])
+        # Group runs by pool name and keep the highest-fidelity run per pool.
+        by_pool = defaultdict(list)
+        for run in all_opt_runs:
+            by_pool[run[0].name].append(run)
 
+        optimized = [
+            sorted(by_pool[pool_idx], key=lambda x: x[1])[-1]
+            for pool_idx in sorted(by_pool.keys())
+        ]
 
         self.all_opt_runs = all_opt_runs
         self.optimized_pools = optimized
