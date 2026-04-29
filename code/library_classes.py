@@ -411,7 +411,13 @@ class Pool:
         self.upstream_bbsite = upstream_bbsite if upstream_bbsite else ""
         self.downstream_bbsite = downstream_bbsite if downstream_bbsite else ""
         # Filter out empty strings from other_used_sites
-        self.other_used_sites = [s for s in (other_used_sites or []) if s]
+        # Same numpy-truthiness pitfall as Library.__init__: `(arr or [])`
+        # raises ValueError when arr is an empty np.array. Treat None / empty /
+        # populated all consistently as a list of truthy entries.
+        if other_used_sites is None or len(other_used_sites) == 0:
+            self.other_used_sites = []
+        else:
+            self.other_used_sites = [s for s in other_used_sites if s]
         self.fprimer = forward_primer
         self.rprimer = reverse_primer
         self.oligo_len = oligo_len
@@ -653,7 +659,13 @@ class SAPool:
         self.enzyme = enzyme
         self.upstream_bbsite = upstream_bbsite if upstream_bbsite else ""
         self.downstream_bbsite = downstream_bbsite if downstream_bbsite else ""
-        self.other_used_sites = [s for s in (other_used_sites or []) if s]
+        # numpy-truthiness pitfall: `(arr or [])` raises ValueError on an
+        # empty np.array. Library.optimize_pools passes its stored numpy
+        # array through to here, so we have to handle that case.
+        if other_used_sites is None or len(other_used_sites) == 0:
+            self.other_used_sites = []
+        else:
+            self.other_used_sites = [s for s in other_used_sites if s]
         self.fprimer = forward_primer
         self.rprimer = reverse_primer
         self.oligo_len = oligo_len
@@ -940,7 +952,12 @@ class Gene:
         self.enzyme = enzyme
         self.upstream_bbsite = upstream_bbsite if upstream_bbsite else ""
         self.downstream_bbsite = downstream_bbsite if downstream_bbsite else ""
-        self.other_used_sites = [s for s in (other_used_sites or []) if s]
+        # See note in SAPool.__init__: `(arr or [])` raises ValueError on an
+        # empty np.array, which Library threads through.
+        if other_used_sites is None or len(other_used_sites) == 0:
+            self.other_used_sites = []
+        else:
+            self.other_used_sites = [s for s in other_used_sites if s]
         self.oligo_len = oligo_len
         self.illegal_dna_sequences = illegal_dna_sequences
         self.forced_cut_sites = forced_cut_sites
