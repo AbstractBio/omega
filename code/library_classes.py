@@ -196,7 +196,14 @@ class Library:
         self.enzyme = enzyme
         self.upstream_bbsite = upstream_bbsite
         self.downstream_bbsite = downstream_bbsite
-        self.other_used_sites = other_used_sites or np.array([])
+        # `or` doesn't work with numpy arrays — bool(empty_array) raises
+        # ValueError. Handle None, empty list, empty array, and populated
+        # array all consistently.
+        self.other_used_sites = (
+            np.asarray(other_used_sites)
+            if other_used_sites is not None and len(other_used_sites) > 0
+            else np.array([])
+        )
         self.illegal_dna_sequences = illegal_dna_sequences
         self.min_size = min_size
         self.forced_cut_sites = forced_cut_sites
