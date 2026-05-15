@@ -160,7 +160,8 @@ class JunctionSet:
         """Retrieve site options for junction set."""
 
         palindromic_sites = ['GCGC', 'CGCG', 'ATAT', 'TATA', 'GGCC', 'GGCC', 'AATT', 'TTAA', 'TGCA', 'AGCT','TCGA', 'ACGT', 'GATC', 'GTAC', 'CATG', 'CTAG']
-        illegal_sites = self.fixed_sites + palindromic_sites
+        repeat_sites = ['AAAA', 'TTTT', 'CCCC', 'GGGG']
+        illegal_sites = self.fixed_sites + palindromic_sites + repeat_sites
         options = np.array([
             s for s in map("".join, product(*[list("ATGC")]*4)) if s not in illegal_sites
         ])
