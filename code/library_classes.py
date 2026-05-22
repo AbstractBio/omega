@@ -1012,7 +1012,9 @@ class Gene:
             np.array([s for s in self.other_used_sites if s]),
             np.array([str(Seq(self.upstream_bbsite).reverse_complement()), str(Seq(self.downstream_bbsite).reverse_complement())]),
             np.array([str(Seq(s).reverse_complement()) for s in self.other_used_sites if s]),
-            np.array(['GCGC', 'CGCG', 'ATAT', 'TATA', 'GGCC', 'GGCC', 'AATT', 'TTAA', 'TGCA', 'AGCT','TCGA', 'ACGT', 'GATC', 'GTAC', 'CATG', 'CTAG'])
+            np.array(['GCGC', 'CGCG', 'ATAT', 'TATA', 'GGCC', 'GGCC', 'AATT', 'TTAA', 'TGCA', 'AGCT','TCGA', 'ACGT', 'GATC', 'GTAC', 'CATG', 'CTAG']),
+            np.array(['AAAA', 'TTTT', 'CCCC', 'GGGG']), # repeats of the same base are bad news for oligo synthesis 
+            np.array(['AATA', 'ATAA', 'ATTA', 'TAAT', 'TATT', 'TTAT', 'TAAA', 'TTTA']) # weak GG sites 
         ])
         # print(disallowed_sites)
         # retain sites that are no backbone or disallowed sites
