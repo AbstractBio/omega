@@ -50,7 +50,8 @@ def genes(
         wiggle_room: int = 24,
         gc_weight: float = 0.0,
         forced_cut_sites: bool = False,
-        forced_offsets_file: Optional[str] = None
+        forced_offsets_file: Optional[str] = None,
+        random_seed: Optional[int] = None
 ) -> None:
     """
     Design library for pooled golden gate assembly.
@@ -80,9 +81,16 @@ def genes(
             forced handling for internal cut sites.
         forced_offsets_file: Optional JSON file mapping gene IDs to per-site
             split offsets chosen by bin_sequences for orthogonality.
+        random_seed: Seeds numpy's global RNG, which generates the oligo padding
+            (helpers.random_dna). Set it for reproducible oligo sequences; leave it
+            None for fresh padding each run. Optimization seeds are separate.
 
     """
     #pylint: disable=too-many-arguments, too-many-locals
+
+    # seed the padding RNG first so identical inputs give identical oligos
+    if random_seed is not None:
+        np.random.seed(random_seed)
 
     # if output directory doesn't exist, write it
     if not exists(output_dir):
